@@ -56,6 +56,77 @@ class LineDetectorHSV(dtu.Configurable, LineDetectorInterface):
 
         return bw, edge_color
 
+    def hist_binarize(self, img, k ):
+        '''
+        Returns the binarized mask based on information from L, a and b channels of the image in CIELAB.
+        The mask from L channel (bin_res_l) corresponds to light objects on the image (all road markings)
+        The mask from a channel (bin_res_a) corresponds to red objects on the image (red road markings)
+        The mask from b channel (bin_res_b) corresponds to yellow on the image (yellow road markings)
+
+        Parameters:
+            img (np.array): Image of the road in RGB format (only ROI).
+        k (double): scaling coefficient, depends on the size of the road marking (for DT k~=1, for real roads k~=2)
+        
+        Returns:
+            bin_res_l, bin_res_a, bin_res_b(np.array): Binarized images of L, a, and b channels.   
+        '''
+        img = cv2.GaussianBlur(img,(5,5),0)
+            
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+        l, a, b = cv2.split( img )
+        
+        norm_l = cv2.normalize(l, None, alpha=0 , beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+        norm_a = cv2.normalize(a, None, alpha=0 , beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+        norm_b = cv2.normalize(b, None, alpha=0 , beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+            
+        mu_l, sigma_l = cv2.meanStdDev( norm_l )
+        mu_l = mu_l[0]
+        sigma_l = sigma_l[0]
+        t_l = int( mu_l + sigma_l * (k + sigma_l * np.sqrt(3)/(255)) )
+        _, thresh_l = cv2.threshold( norm_l, t_l, 1, cv2.THRESH_BINARY )
+
+        mu_a, sigma_a = cv2.meanStdDev( norm_a )
+        mu_a = mu_a[0]
+        sigma_a = sigma_a[0]
+        t_a = int( mu_a + sigma_a * (k + sigma_a * np.sqrt(3)/(255)) )
+        _, thresh_a = cv2.threshold( norm_a, t_a, 1, cv2.THRESH_BINARY )
+            
+        mu_b, sigma_b = cv2.meanStdDev( norm_b )
+        mu_b = mu_b[0]
+        sigma_b = sigma_b[0]
+        t_b = int( mu_b + sigma_b * (k + sigma_b * np.sqrt(3)/(255)) )
+        _, thresh_b = cv2.threshold( norm_b, t_b, 1, cv2.THRESH_BINARY )
+
+        kernel = np.ones((3, 3))
+        bin_res_l = cv2.morphologyEx(thresh_l, cv2.MORPH_CLOSE, kernel)
+        bin_res_a = cv2.morphologyEx(thresh_a, cv2.MORPH_CLOSE, kernel)
+        bin_res_b = cv2.morphologyEx(thresh_b, cv2.MORPH_CLOSE, kernel)
+            
+        return bin_res_l, bin_res_a, bin_res_b
+
+    def _colorFilter_binarize(self, color):
+        # threshold colors in HSV space
+
+        if color == 'white':
+            bw = self.white
+        elif color == 'yellow':
+            bw = self.yellow
+        elif color == 'red':
+            bw = self.red
+        else:
+            raise Exception('Error: Undefined color strings...')
+
+        # binary dilation
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+                                           (self.dilation_kernel_size, self.dilation_kernel_size))
+        bw = cv2.dilate(bw, kernel)
+
+        # refine edge for certain color
+        edge_color = cv2.bitwise_and(bw, self.edges)
+
+        return bw, edge_color
+
+
     def _findEdge(self, gray):
         edges = cv2.Canny(gray, self.canny_thresholds[0], self.canny_thresholds[1], apertureSize=3)
         return edges
@@ -124,7 +195,8 @@ class LineDetectorHSV(dtu.Configurable, LineDetectorInterface):
 
     def detectLines(self, color):
         with dtu.timeit_clock('_colorFilter'):
-            bw, edge_color = self._colorFilter(color)
+            # bw, edge_color = self._colorFilter(color)
+            bw, edge_color = self._colorFilter_binarize(color)
         with dtu.timeit_clock('_HoughLine'):
             lines = self._HoughLine(edge_color)
         with dtu.timeit_clock('_findNormal'):
@@ -132,13 +204,19 @@ class LineDetectorHSV(dtu.Configurable, LineDetectorInterface):
         return Detections(lines=lines, normals=normals, area=bw, centers=centers)
 
     def setImage(self, bgr):
-
         with dtu.timeit_clock('np.copy'):
             self.bgr = np.copy(bgr)
         with dtu.timeit_clock('cvtColor COLOR_BGR2HSV'):
             self.hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
         with dtu.timeit_clock('_findEdge'):
             self.edges = self._findEdge(self.bgr)
+
+        image_rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        koefficient = 2
+        bin_res_l, bin_res_a, bin_res_b = self.hist_binarize(image_rgb, koefficient)
+        self.yellow = np.uint8(bin_res_b * 255)
+        self.white = np.uint8(bin_res_l * 255)
+        self.red = np.uint8(bin_res_a * 255)
 
     def getImage(self):
         return self.bgr
