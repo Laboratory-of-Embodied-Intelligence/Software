@@ -1,3 +1,7 @@
+В данной ветке содержится улучшенный алгоритм распознавания линии. Отсутствует необходимость подбирать пороги отсечения цветов.
+Инструкция по запуску данного алгоритма, а также информация по настройке расположена в [файле Duckietown_Guide](docs/Duckietown_Guide.pdf)
+Ход разработки данного алгоритма находится в [репозитории line-detector](https://github.com/Laboratory-of-Embodied-Intelligence/line-detector)
+
 # Main software repository for Duckietown
 
 This is the main software repository for [the Duckietown project][main]. It contains all software, as well as hardware projects.
